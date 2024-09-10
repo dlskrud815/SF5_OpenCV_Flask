@@ -147,8 +147,8 @@ def detect_contour():
     else:
         return 'Latest image not found', 404
 
-@app.route('/detect/defect', methods=['GET'])
-def detect_contour():
+# @app.route('/detect/defect', methods=['GET'])
+# def detect_contour():
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
