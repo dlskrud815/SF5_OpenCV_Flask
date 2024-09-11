@@ -2,18 +2,24 @@ from flask import Flask, request, jsonify, send_from_directory
 import os
 import MySQLdb
 import shutil
+import json
 import cv2
 import subprocess
-import torch
+# import torch # ---- 주석 해제
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['RESULT_FOLDER'] = 'results'
+app.config['UPLOAD_FOLDER'] = 'uploads' # 유니티 객체 감지
+
+app.config['RESULT_FOLDER'] = 'results' # 업로드 결과 저장
 app.config['BACKGROUND_FOLDER'] = 'background'
+
+app.config['XRAY_FOLDER'] = 'images_xray' # 엑스레이 이미지
+
+app.config['DEFECT_FOLDER'] = 'defects' # 결함 검사 결과
 
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = '0000'
+app.config['MYSQL_PASSWORD'] = '1234'
 app.config['MYSQL_DB'] = 'image_db'
 
 
@@ -48,13 +54,63 @@ def update_detect_status(filename):
     
     return 'Update successful'
 
-@app.route('/cuda', methods=['GET'])
-def cuda():
-    print(torch.__version__)  # PyTorch 버전 확인
-    print(torch.version.cuda)  # CUDA 버전 확인
-    print(torch.cuda.is_available())  # CUDA 사용 가능 여부 확인
+def move_to_defects_from_results():
+    source_folder = './yolov3/result'
+    destination_folder = app.config['DEFECT_FOLDER']
+
+    for filename in os.listdir(source_folder):
+        file_path = os.path.join(source_folder, filename)
+
+        if os.path.isfile(file_path):
+            shutil.move(file_path, os.path.join(destination_folder, filename))
+
+    return 'Move successful'
+
+def is_image_file(filename):
+    image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
+    return os.path.splitext(filename)[1].lower() in image_extensions
+
+def update_defect_status():
+    files2 = [os.path.join(app.config['RESULT_FOLDER'], f) for f in os.listdir(app.config['RESULT_FOLDER']) if os.path.isfile(os.path.join(app.config['RESULT_FOLDER'], f))]
+    files = [os.path.join(app.config['DEFECT_FOLDER'], f) for f in os.listdir(app.config['DEFECT_FOLDER'])
+             if os.path.isfile(os.path.join(app.config['DEFECT_FOLDER'], f)) and is_image_file(f)]
     
-    return 'cuda check', 200
+    if files:
+        latest_file2 = max(files2, key=os.path.getmtime)
+        filename2 = os.path.basename(latest_file2)
+
+        latest_file = max(files, key=os.path.getmtime)
+        defect_filename = os.path.basename(latest_file)
+        defect_filepath = latest_file
+
+        update_sql = """
+        UPDATE images
+        SET defect_filename = %s, defect_filepath = %s
+        WHERE filename = %s;
+        """
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(update_sql, (defect_filename, defect_filepath, filename2))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            return str(e)
+        finally:
+            cursor.close()
+            conn.close()
+        
+        return 'Update successful'
+
+# @app.route('/cuda', methods=['GET'])
+# def cuda():
+#     print(torch.__version__)  # PyTorch 버전 확인
+#     print(torch.version.cuda)  # CUDA 버전 확인
+#     print(torch.cuda.is_available())  # CUDA 사용 가능 여부 확인
+    
+#     return 'cuda check', 200
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -114,6 +170,7 @@ def detect_contour():
         return 'Latest image not found', 404
 
     latest_file = max(files, key=os.path.getmtime)
+
     if latest_file and os.path.exists(latest_file):
         background_image_path = os.path.join(app.config['BACKGROUND_FOLDER'], 'conveyor_img.png')
 
@@ -162,12 +219,48 @@ def detect_contour():
 
 @app.route('/run_detection', methods=['POST'])
 def run_detection():
+    xray_folder = app.config['XRAY_FOLDER']
+    processed_record_path = 'processed_files.json'
+
+    # Initialize processed files list
+    processed_files = []
+
+    # Try to load the processed files record
+    if os.path.exists(processed_record_path):
+        try:
+            with open(processed_record_path, 'r') as f:
+                processed_files = json.load(f)
+        except json.JSONDecodeError:
+            # Handle the case where the JSON is invalid or empty
+            processed_files = []
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Error loading processed files record: {str(e)}"}), 500
+
+    # Get the list of files in the XRAY_FOLDER
+    files = [os.path.join(xray_folder, f) for f in os.listdir(xray_folder) if os.path.isfile(os.path.join(xray_folder, f))]
+    
+    # Filter out the processed files
+    unprocessed_files = [f for f in files if f not in processed_files]
+    
+    if not unprocessed_files:
+        return jsonify({"status": "error", "message": "No unprocessed X-ray images found"}), 404
+
+    oldest_file = min(unprocessed_files, key=os.path.getmtime)
+    processed_files.append(oldest_file)
+    with open(processed_record_path, 'w') as f:
+        json.dump(processed_files, f)
+    # return jsonify({"status": "success", "message": oldest_file}), 200
+
+    # if(move_to_defects_from_results() == 'Move successful' and update_defect_status() == 'Update successful'):
+    #     return jsonify({"status": "success", "message": oldest_file}), 200
+    # return jsonify({"status": "error", "message": 'move failed'}), 400
+
     try:
         # 명령어를 실행
         command = [
             'python', './yolov3/detect_test.py', 
             '--weights', './yolov3/weights/last.pt', 
-            '--source', './yolov3/images/002_20200922_083747(7).jpg', #'./yolov3/images', 
+            '--source', oldest_file, #'./yolov3/images/002_20200922_083747(7).jpg', #'./yolov3/images', 
             '--cfg', './yolov3/yolov3-spp.cfg', 
             '--names', './yolov3/classes.names', '--output', './yolov3/result', 
             '--half',
@@ -179,8 +272,9 @@ def run_detection():
         if result.returncode == 0:
             
             defects_check = "defects, Done" in result.stdout
-            
-            return jsonify({"status": "success", "defects_check": defects_check, "output": result.stdout}), 200
+
+            if(move_to_defects_from_results() == 'Move successful' and update_defect_status == 'Update successful'):
+                return jsonify({"status": "success", "defects_check": defects_check, "output": result.stdout}), 200
         else:
             return jsonify({"status": "error", "error": result.stderr}), 400
     except Exception as e:
