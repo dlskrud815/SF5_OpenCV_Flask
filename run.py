@@ -42,7 +42,7 @@ def update_detect_status(filename):
     try:
         cursor.execute(
             "UPDATE images SET detect = TRUE WHERE filename = %s",
-            (filename,)
+            (filename)
         )
         conn.commit()
     except Exception as e:
@@ -294,9 +294,120 @@ def run_detection():
 
 # ------------------------------ for Unity Action ----------------------------
 
+@app.route('/check/detect', methods=['POST'])
+def check_detect():
+    data = request.json
+    filename = data.get('filename') # Temp 폴더에 있는 캡쳐 이미지 파일명
 
+    if filename:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
+        try:
+            # SQL 쿼리를 실행하고 결과를 가져옴
+            cursor.execute("SELECT detect FROM images WHERE filename = %s", (filename))
+            result = cursor.fetchone()  # 쿼리 결과에서 첫 번째 행을 가져옴
 
+            if result is not None:
+                detect_value = result[0]  # 결과가 있으면 첫 번째 컬럼(detect) 값을 가져옴
+                success = detect_value is not None  # detect 값이 None이 아닌 경우에만 True로 설정
+                message = "Filename found and detect value retrieved successfully"
+            else:
+                success = False
+                message = "Filename not found in the database"
+
+        except Exception as e:
+            # 예외 발생 시 롤백 및 오류 메시지 반환
+            conn.rollback()
+            success = False
+            message = f"Error: {str(e)}"
+
+        finally:
+            cursor.close()
+            conn.close()
+
+        return jsonify(success=success, message=message, detect=detect_value if success else None)
+
+    else:
+        return jsonify(success=False, message="Filename not provided"), 400
+
+@app.route('/check/defect', methods=['POST'])
+def check_defect():
+    data = request.json
+    filename = data.get('filename') # Temp 폴더에 있는 캡쳐 이미지 파일명
+
+    if filename:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            # SQL 쿼리를 실행하고 결과를 가져옴
+            cursor.execute("SELECT defect FROM images WHERE filename = %s", (filename))
+            result = cursor.fetchone()  # 쿼리 결과에서 첫 번째 행을 가져옴
+
+            if result is not None:
+                defect_value = result[0]  # 결과가 있으면 첫 번째 컬럼(defect) 값을 가져옴
+                success = defect_value is not None  # defect 값이 None이 아닌 경우에만 True로 설정
+                message = "Filename found and defect value retrieved successfully"
+            else:
+                success = False
+                message = "Filename not found in the database"
+
+        except Exception as e:
+            # 예외 발생 시 롤백 및 오류 메시지 반환
+            conn.rollback()
+            success = False
+            message = f"Error: {str(e)}"
+
+        finally:
+            cursor.close()
+            conn.close()
+
+        return jsonify(success=success, message=message, defect=defect_value if success else None)
+
+    else:
+        return jsonify(success=False, message="Filename not provided"), 400
+
+@app.route('/finish/defect', methods=['POST'])
+def finish_defect():
+    data = request.json
+    filename = data.get('filename')  # Temp 폴더에 있는 캡쳐 이미지 파일명
+
+    if filename:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            # SQL 쿼리를 실행하고 결과를 가져옴
+            cursor.execute("SELECT defect_filename FROM images WHERE filename = %s", (filename,))
+            result = cursor.fetchone()  # 쿼리 결과에서 첫 번째 행을 가져옴
+
+            if result is not None:
+                defect_filename = result[0]  # 결과가 있으면 첫 번째 컬럼(defect_filename) 값을 가져옴
+                defect_value = bool(defect_filename)  # defect_filename이 빈 문자열이 아니면 True로 설정
+                success = True
+                message = "Filename found and defect value retrieved successfully"
+            else:
+                defect_value = False
+                success = False
+                message = "Filename not found in the database"
+
+        except Exception as e:
+            # 예외 발생 시 롤백 및 오류 메시지 반환
+            conn.rollback()
+            success = False
+            defect_value = False
+            message = f"Error: {str(e)}"
+
+        finally:
+            cursor.close()
+            conn.close()
+
+        return jsonify(success=success, message=message, defect=defect_value)
+
+    else:
+        return jsonify(success=False, message="Filename not provided"), 400
+    
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
