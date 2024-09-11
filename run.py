@@ -8,7 +8,7 @@ import subprocess
 # import torch # ---- 주석 해제
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads' # 유니티 객체 감지
+app.config['UPLOAD_FOLDER'] = 'uploads' # 유니티 객체 감지 'C:\Temp'
 
 app.config['RESULT_FOLDER'] = 'results' # 업로드 결과 저장
 app.config['BACKGROUND_FOLDER'] = 'background'
@@ -57,20 +57,28 @@ def update_detect_status(filename):
 def move_to_defects_from_results():
     source_folder = './yolov3/result'
     destination_folder = app.config['DEFECT_FOLDER']
-
+    
+    txt_file_found = False
+    
     for filename in os.listdir(source_folder):
         file_path = os.path.join(source_folder, filename)
 
         if os.path.isfile(file_path):
+            if filename.endswith('.txt'):
+                txt_file_found = True
+            
             shutil.move(file_path, os.path.join(destination_folder, filename))
 
-    return 'Move successful'
-
+    if txt_file_found:
+        return True
+    else:
+        return False
+    
 def is_image_file(filename):
     image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'}
     return os.path.splitext(filename)[1].lower() in image_extensions
 
-def update_defect_status():
+def update_defect_status(txt_file_found):
     files2 = [os.path.join(app.config['RESULT_FOLDER'], f) for f in os.listdir(app.config['RESULT_FOLDER']) if os.path.isfile(os.path.join(app.config['RESULT_FOLDER'], f))]
     files = [os.path.join(app.config['DEFECT_FOLDER'], f) for f in os.listdir(app.config['DEFECT_FOLDER'])
              if os.path.isfile(os.path.join(app.config['DEFECT_FOLDER'], f)) and is_image_file(f)]
@@ -85,7 +93,7 @@ def update_defect_status():
 
         update_sql = """
         UPDATE images
-        SET defect_filename = %s, defect_filepath = %s
+        SET defect_filename = %s, defect_filepath = %s, defect = %s
         WHERE filename = %s;
         """
 
@@ -93,7 +101,7 @@ def update_defect_status():
         cursor = conn.cursor()
         
         try:
-            cursor.execute(update_sql, (defect_filename, defect_filepath, filename2))
+            cursor.execute(update_sql, (defect_filename, defect_filepath, txt_file_found, filename2))
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -111,6 +119,9 @@ def update_defect_status():
 #     print(torch.cuda.is_available())  # CUDA 사용 가능 여부 확인
     
 #     return 'cuda check', 200
+
+# @app.route('/db/', methods=['GET'])
+# def detect_contour():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -251,7 +262,7 @@ def run_detection():
         json.dump(processed_files, f)
     # return jsonify({"status": "success", "message": oldest_file}), 200
 
-    # if(move_to_defects_from_results() == 'Move successful' and update_defect_status() == 'Update successful'):
+    # if(update_defect_status(move_to_defects_from_results()) == 'Update successful'):
     #     return jsonify({"status": "success", "message": oldest_file}), 200
     # return jsonify({"status": "error", "message": 'move failed'}), 400
 
@@ -273,12 +284,18 @@ def run_detection():
             
             defects_check = "defects, Done" in result.stdout
 
-            if(move_to_defects_from_results() == 'Move successful' and update_defect_status == 'Update successful'):
+            if(update_defect_status(move_to_defects_from_results()) == 'Update successful'):
                 return jsonify({"status": "success", "defects_check": defects_check, "output": result.stdout}), 200
         else:
             return jsonify({"status": "error", "error": result.stderr}), 400
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
+
+
+# ------------------------------ for Unity Action ----------------------------
+
+
+
 
 
 if __name__ == '__main__':
