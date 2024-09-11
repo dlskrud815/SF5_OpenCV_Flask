@@ -1,8 +1,10 @@
-from flask import Flask, request, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 import os
 import MySQLdb
 import shutil
 import cv2
+import subprocess
+import torch
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -11,7 +13,7 @@ app.config['BACKGROUND_FOLDER'] = 'background'
 
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = '1234'
+app.config['MYSQL_PASSWORD'] = '0000'
 app.config['MYSQL_DB'] = 'image_db'
 
 
@@ -45,6 +47,14 @@ def update_detect_status(filename):
         conn.close()
     
     return 'Update successful'
+
+@app.route('/cuda', methods=['GET'])
+def cuda():
+    print(torch.__version__)  # PyTorch 버전 확인
+    print(torch.version.cuda)  # CUDA 버전 확인
+    print(torch.cuda.is_available())  # CUDA 사용 가능 여부 확인
+    
+    return 'cuda check', 200
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -149,6 +159,33 @@ def detect_contour():
 
 # @app.route('/detect/defect', methods=['GET'])
 # def detect_contour():
+
+@app.route('/run_detection', methods=['POST'])
+def run_detection():
+    try:
+        # 명령어를 실행
+        command = [
+            'python', './yolov3/detect_test.py', 
+            '--weights', './yolov3/weights/last.pt', 
+            '--source', './yolov3/images/002_20200922_083747(7).jpg', #'./yolov3/images', 
+            '--cfg', './yolov3/yolov3-spp.cfg', 
+            '--names', './yolov3/classes.names', '--output', './yolov3/result', 
+            '--half',
+            '--save-txt' 
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+
+        # 명령어 실행 결과 확인
+        if result.returncode == 0:
+            
+            defects_check = "defects, Done" in result.stdout
+            
+            return jsonify({"status": "success", "defects_check": defects_check, "output": result.stdout}), 200
+        else:
+            return jsonify({"status": "error", "error": result.stderr}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 
 if __name__ == '__main__':
     if not os.path.exists(app.config['UPLOAD_FOLDER']):
